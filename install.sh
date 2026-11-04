@@ -3,7 +3,7 @@
 #  Установка mybot — меню управления ботами.
 #
 #  На чистом сервере:
-#      curl -fsSL https://raw.githubusercontent.com/ЛОГИН/mybot/main/install.sh | bash
+#      curl -fsSL https://raw.githubusercontent.com/arhman92/mybot/main/install.sh | bash
 #
 #  Если файлы уже лежат рядом (скачал архивом с GitHub) — просто:
 #      bash install.sh
