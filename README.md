@@ -18,7 +18,7 @@
 ## Установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ЛОГИН/mybot/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/arhman92/mybot/main/install.sh | bash
 ```
 
 Или скачать репозиторий архивом, распаковать и выполнить внутри:
