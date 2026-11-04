@@ -1,0 +1,45 @@
+# Библиотеки для трёх ботов. Ставить в venv:
+#     venv/bin/pip install -r requirements.txt
+#
+# ЗАЧЕМ ЗДЕСЬ ПРИБИТА ВЕРСИЯ. В azure-mgmt-resource 26 верхний уровень
+# пакета разобрали на части, и ResourceManagementClient оттуда пропал.
+# Бот падает на первом импорте с «cannot import name ... (unknown
+# location)» — причину по такому сообщению не угадать. Проверено: 23.0.1
+# работает.
+
+# ── Телеграм ──
+aiogram>=3.4.0
+python-telegram-bot>=20.0
+python-dotenv>=1.0.0
+
+# ── SSH и серверы ──
+asyncssh>=2.14.0
+paramiko>=3.3.0
+
+# ── База панели ──
+mysql-connector-python>=8.0.0
+
+# ── AWS ──
+boto3>=1.34.0
+botocore>=1.34.0
+
+# ── Azure ──
+azure-core>=1.30.0
+azure-identity>=1.15.0
+azure-mgmt-compute>=30.4.0
+azure-mgmt-network>=25.2.0
+azure-mgmt-resource==23.0.1
+
+# ── Google Drive ──
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+httplib2>=0.22.0
+
+# ── Прочее ──
+requests>=2.31.0
+urllib3>=2.0.0
+curl_cffi>=0.6.0
+flask>=2.3.0
+qrcode[pil]>=7.4.2

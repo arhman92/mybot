@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# ════════════════════════════════════════════════════════════════════
+#  mybot — меню управления ботами
+#
+#  Запуск:  mybot            (меню)
+#           mybot status     (одной строкой, без меню)
+#
+#  Боты живут в screen-сессиях, поэтому к любому можно подключиться и
+#  смотреть вывод вживую, как раньше руками. Разница в том, что теперь
+#  не надо помнить ни путей, ни того, каким питоном запускать.
+#
+#  Сами боты после перезагрузки сервера НЕ поднимаются — так задумано.
+#  Поднимешь их отсюда, когда сочтёшь нужным.
+#
+#  Имена переменных латиницей не от лени: bash не принимает кириллицу
+#  в именах, хотя в текстах и комментариях она ему безразлична.
+# ════════════════════════════════════════════════════════════════════
+
+set -u
+
+# screen отказывается работать, если TERM не задан, — а он не задан при
+# запуске из cron, из автоматики и в некоторых SSH-клиентах. Сообщение
+# при этом невнятное, а бот просто не поднимается. Подставляем безопасное
+# значение заранее.
+: "${TERM:=xterm}"
+export TERM
+
+PY="/root/4idea/Artemis/venv/bin/python"
+LOGS="/root/4idea/Artemis/logs"
+
+# Боты: ИМЯ | папка | файл | имя screen-сессии
+BOTS=(
+  "ARTEMIS|/root/4idea/Artemis|main.py|artemis"
+  "AZUREIPAUTO|/root/4idea/Artemis/azureipauto|bot.py|azureipauto"
+  "DILLERBOT|/root/4idea/Artemis/dillerbot|bot.py|dillerbot"
+)
+
+G='\033[0;32m'; R='\033[0;31m'; Y='\033[1;33m'; C='\033[0;36m'; N='\033[0m'; B='\033[1m'
+
+fld() { echo "$1" | cut -d'|' -f"$2"; }
+
+# ── Жив ли бот ──
+#
+# Ищем по ПОЛНОМУ ПУТИ файла, и ради этого бот запускается с полным
+# путём (см. bot_start). Если запускать его как «python bot.py» из
+# нужной папки, в командной строке останется голое «bot.py» — а оно
+# одинаковое у двух ботов из трёх, и меню путало бы их между собой.
+bot_pid() {
+  pgrep -f "$1/$2" 2>/dev/null | head -1
+}
+
+uptime_of() {
+  [ -z "$1" ] && return
+  ps -o etime= -p "$1" 2>/dev/null | tr -d ' '
+}
+
+mem_of() {
+  [ -z "$1" ] && return
+  local kb; kb=$(ps -o rss= -p "$1" 2>/dev/null | tr -d ' ')
+  [ -n "$kb" ] && echo "$((kb / 1024)) МБ"
+}
+
+state_of() {
+  local p; p=$(bot_pid "$1" "$2")
+  if [ -n "$p" ]; then
+    printf "${G}● работает${N}  (pid %s · %s · %s)" \
+           "$p" "$(uptime_of "$p")" "$(mem_of "$p")"
+  else
+    printf "${R}○ остановлен${N}"
+  fi
+}
+
+# ── Запуск ──────────────────────────────────────────────────────────
+bot_start() {
+  local name="$1" dir="$2" file="$3" sess="$4"
+  if [ -n "$(bot_pid "$dir" "$file")" ]; then
+    echo -e "${Y}$name уже работает.${N} Второй раз запускать нельзя: два"
+    echo "процесса с одним токеном отбирают события друг у друга, и бот"
+    echo "начинает «терять» нажатия."
+    return
+  fi
+  if [ ! -x "$PY" ]; then
+    echo -e "${R}Не нашёл питон бота:${N} $PY"
+    return
+  fi
+  if [ ! -f "$dir/$file" ]; then
+    echo -e "${R}Не нашёл файл бота:${N} $dir/$file"
+    return
+  fi
+
+  mkdir -p "$LOGS"
+  local log="$LOGS/${sess}.log"
+  { echo ""; echo "───── запуск $(date '+%Y-%m-%d %H:%M:%S') ─────"; } >> "$log"
+
+  # -L -Logfile пишет лог на диск И оставляет вывод в самой сессии,
+  # так что «смотреть лог» и «войти в сессию» работают оба.
+  # Путь к файлу ПОЛНЫЙ, хотя мы и так переходим в его папку. Это не
+  # лишнее: по нему меню потом и узнаёт своего бота среди чужих.
+  if ! screen -L -Logfile "$log" -dmS "$sess" \
+         bash -c "cd '$dir' && exec '$PY' -u '$dir/$file'" 2>/dev/null; then
+    # Старый screen без -Logfile — пишем перенаправлением.
+    screen -dmS "$sess" \
+      bash -c "cd '$dir' && exec '$PY' -u '$dir/$file' >> '$log' 2>&1"
+  fi
+
+  sleep 2
+  local p; p=$(bot_pid "$dir" "$file")
+  if [ -n "$p" ]; then
+    echo -e "${G}$name запущен${N} (pid $p)"
+    echo "Лог: $log"
+  else
+    echo -e "${R}$name не поднялся.${N} Последние строки лога:"
+    echo "────────────────────────────────────────────"
+    tail -n 15 "$log" 2>/dev/null
+    echo "────────────────────────────────────────────"
+  fi
+}
+
+# ── Остановка: сначала вежливо, потом силой ─────────────────────────
+bot_stop() {
+  local name="$1" dir="$2" file="$3" sess="$4"
+  local p; p=$(bot_pid "$dir" "$file")
+  if [ -z "$p" ]; then
+    echo -e "${Y}$name и так не работает.${N}"
+    return
+  fi
+  echo "Прошу $name завершиться…"
+  kill "$p" 2>/dev/null
+  local i
+  for i in $(seq 1 10); do
+    sleep 1
+    [ -z "$(bot_pid "$dir" "$file")" ] && break
+  done
+  if [ -n "$(bot_pid "$dir" "$file")" ]; then
+    echo -e "${Y}Не послушался за 10 секунд — останавливаю жёстко.${N}"
+    kill -9 "$(bot_pid "$dir" "$file")" 2>/dev/null
+    sleep 1
+  fi
+  screen -S "$sess" -X quit >/dev/null 2>&1
+  if [ -z "$(bot_pid "$dir" "$file")" ]; then
+    echo -e "${G}$name остановлен.${N}"
+  else
+    echo -e "${R}$name всё ещё жив. Посмотри: ps aux | grep $file${N}"
+  fi
+}
+
+bot_log() {
+  local log="$LOGS/${1}.log"
+  if [ ! -f "$log" ]; then
+    echo -e "${Y}Лога пока нет:${N} $log"
+    return
+  fi
+  echo -e "${C}Последние 40 строк, дальше — вживую. Выход: Ctrl+C${N}"
+  echo "────────────────────────────────────────────"
+  tail -n 40 -f "$log"
+}
+
+# ── Экран одного бота ───────────────────────────────────────────────
+bot_menu() {
+  local row="$1" name dir file sess ans
+  name=$(fld "$row" 1); dir=$(fld "$row" 2)
+  file=$(fld "$row" 3); sess=$(fld "$row" 4)
+
+  while true; do
+    clear
+    echo -e "${B}  $name${N}"
+    echo "  ════════════════════════════════════════════════"
+    echo -e "  Состояние: $(state_of "$dir" "$file")"
+    echo "  Папка:     $dir"
+    echo ""
+    echo "   1) Запустить"
+    echo "   2) Перезапустить"
+    echo "   3) Остановить"
+    echo "   4) Смотреть лог"
+    echo "   5) Войти в сессию screen"
+    echo "   0) Назад"
+    echo ""
+    read -rp "  Выбор: " ans
+    echo ""
+    case "$ans" in
+      1) bot_start "$name" "$dir" "$file" "$sess" ;;
+      2) bot_stop  "$name" "$dir" "$file" "$sess"; echo ""
+         bot_start "$name" "$dir" "$file" "$sess" ;;
+      3) bot_stop  "$name" "$dir" "$file" "$sess" ;;
+      4) bot_log   "$sess" ;;
+      5) if screen -ls 2>/dev/null | grep -q "[.]${sess}[[:space:]]"; then
+           echo -e "${C}Отцепиться от сессии: Ctrl+A, затем D${N}"
+           sleep 2
+           screen -r "$sess"
+         else
+           echo -e "${Y}Сессии нет — бот запущен не отсюда или не запущен.${N}"
+         fi ;;
+      0|"") return ;;
+      *) echo -e "${Y}Нет такого пункта.${N}" ;;
+    esac
+    echo ""
+    read -rp "  Enter — дальше " _
+  done
+}
+
+# ── Главное меню ────────────────────────────────────────────────────
+main_menu() {
+  local n row ans
+  while true; do
+    clear
+    echo -e "${B}  МОИ БОТЫ${N}     $(date '+%d.%m.%Y  %H:%M')"
+    echo "  ════════════════════════════════════════════════"
+    n=1
+    for row in "${BOTS[@]}"; do
+      printf "   %d) %-13s %b\n" "$n" "$(fld "$row" 1)" \
+             "$(state_of "$(fld "$row" 2)" "$(fld "$row" 3)")"
+      n=$((n + 1))
+    done
+    echo "   $n) Выход"
+    echo ""
+    read -rp "  Выбор: " ans
+    if [ "$ans" = "$n" ] || [ "$ans" = "0" ] || [ "$ans" = "q" ] || [ -z "$ans" ]; then
+      clear; exit 0
+    fi
+    case "$ans" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    if [ "$ans" -ge 1 ] && [ "$ans" -le "${#BOTS[@]}" ]; then
+      bot_menu "${BOTS[$((ans - 1))]}"
+    fi
+  done
+}
+
+if [ "${1:-}" = "status" ]; then
+  for row in "${BOTS[@]}"; do
+    printf "%-13s %b\n" "$(fld "$row" 1)" \
+           "$(state_of "$(fld "$row" 2)" "$(fld "$row" 3)")"
+  done
+  exit 0
+fi
+
+main_menu
