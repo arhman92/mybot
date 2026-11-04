@@ -13,7 +13,7 @@
 # ════════════════════════════════════════════════════════════════════
 set -e
 
-GITHUB_USER="archman92"
+GITHUB_USER="arhman92"
 REPO="mybot"
 BRANCH="main"
 DEST="/usr/local/bin/mybot"
