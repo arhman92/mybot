@@ -35,6 +35,9 @@ BOTS=(
   "DILLERBOT|/root/4idea/Artemis/dillerbot|bot.py|dillerbot"
 )
 
+BACKUP="/usr/local/lib/mybot/backup.py"
+CRON="/etc/cron.d/mybot-backup"
+
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[1;33m'; C='\033[0;36m'; N='\033[0m'; B='\033[1m'
 
 fld() { echo "$1" | cut -d'|' -f"$2"; }
@@ -198,6 +201,175 @@ bot_menu() {
   done
 }
 
+# ════════════════════ РЕЗЕРВНЫЕ КОПИИ ════════════════════
+#
+# Вся работа — в backup.py, здесь только экраны. Так сделано нарочно:
+# собрать архив, сходить в базу, поговорить с Телеграмом и Диском на
+# bash можно, но читать это потом будет нельзя.
+
+backup_dir() { echo "/root/backups"; }
+
+last_backup_line() {
+  local последний
+  last=$(ls -1t "$(backup_dir)"/artemis-*.tar.gz 2>/dev/null | head -1)
+  if [ -z "$last" ]; then
+    printf "${Y}копий ещё нет${N}"
+    return
+  fi
+  local когда размер
+  when=$(date -r "$last" "+%d.%m %H:%M" 2>/dev/null)
+  size=$(du -h "$last" 2>/dev/null | cut -f1)
+  printf "${G}последняя: %s · %s${N}" "$when" "$size"
+}
+
+# Запуск backup.py тем же питоном, которым живут боты: в нём уже есть
+# requests, mysql-connector и библиотеки Google.
+run_backup() {
+  if [ ! -f "$BACKUP" ]; then
+    echo -e "${R}Не нашёл $BACKUP${N}"
+    echo "Переустанови mybot с GitHub — файл приедет вместе с ним."
+    return 1
+  fi
+  if [ ! -x "$PY" ]; then
+    echo -e "${R}Не нашёл питон ботов:${N} $PY"
+    echo "Сначала «Установить окружение» или создай venv вручную."
+    return 1
+  fi
+  MYBOT_ARTEMIS="$(dirname "$(dirname "$PY")")" \
+  MYBOT_BACKUPS="$(backup_dir)" \
+    "$PY" "$BACKUP" "$@"
+}
+
+cron_state() {
+  if [ -f "$CRON" ]; then
+    local hour
+    # Берём ТОЛЬКО строку расписания — ту, что начинается с цифры.
+    # Без этого awk хватал второе слово из комментария и показывал
+    # «каждую ночь в Резервная:00».
+    hour=$(awk '/^[0-9]/{print $2; exit}' "$CRON" 2>/dev/null)
+    printf "${G}каждую ночь в %s:00${N}" "${hour:-?}"
+  else
+    printf "${Y}выключено${N}"
+  fi
+}
+
+cron_set() {
+  local hour="$1"
+  cat > "$CRON" <<CRONEOF
+# Резервная копия ботов и панели. Поставлено через mybot.
+# Боты в это время не останавливаются: дамп снимается без блокировок.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+0 ${hour} * * * root ${PY} ${BACKUP} make >> ${LOGS}/backup.log 2>&1
+CRONEOF
+  chmod 644 "$CRON"
+  echo -e "${G}Готово. Копия будет сниматься каждую ночь в ${hour}:00${N}"
+  echo "Лог: ${LOGS}/backup.log"
+}
+
+backup_schedule() {
+  while true; do
+    clear
+    echo -e "${B}  РАСПИСАНИЕ КОПИЙ${N}"
+    echo "  ════════════════════════════════════════════════"
+    echo -e "  Сейчас: $(cron_state)"
+    echo ""
+    echo "   1) Каждую ночь в 03:00"
+    echo "   2) Каждую ночь в 05:00"
+    echo "   3) Своё время (час)"
+    echo "   4) Выключить расписание"
+    echo "   0) Назад"
+    echo ""
+    local ans hour
+    read -rp "  Выбор: " ans
+    echo ""
+    case "$ans" in
+      1) cron_set 3 ;;
+      2) cron_set 5 ;;
+      3) read -rp "  В котором часу (0–23): " hour
+         case "$hour" in
+           ''|*[!0-9]*) echo -e "${Y}Нужно число.${N}" ;;
+           *) if [ "$hour" -ge 0 ] && [ "$hour" -le 23 ]; then
+                cron_set "$hour"
+              else
+                echo -e "${Y}Час бывает от 0 до 23.${N}"
+              fi ;;
+         esac ;;
+      4) rm -f "$CRON" && echo -e "${G}Расписание выключено.${N}" ;;
+      0|"") return ;;
+      *) echo -e "${Y}Нет такого пункта.${N}" ;;
+    esac
+    echo ""
+    read -rp "  Enter — дальше " _
+  done
+}
+
+backup_menu() {
+  while true; do
+    clear
+    echo -e "${B}  РЕЗЕРВНЫЕ КОПИИ${N}"
+    echo "  ════════════════════════════════════════════════"
+    echo -e "  Расписание: $(cron_state)"
+    echo -e "  На сервере: $(last_backup_line)"
+    echo ""
+    echo "   1) Сделать копию сейчас"
+    echo "   2) Список копий на сервере"
+    echo "   3) Проверить последнюю копию"
+    echo "   4) Копии на Google Drive"
+    echo "   5) Расписание"
+    echo "   6) Убрать старые"
+    echo "   0) Назад"
+    echo ""
+    local ans
+    read -rp "  Выбор: " ans
+    echo ""
+    case "$ans" in
+      1) echo -e "${C}Собираю. Это займёт полминуты-минуту…${N}"; echo ""
+         run_backup make ;;
+      2) run_backup list ;;
+      3) echo -e "${C}Разворачиваю во временную папку и проверяю…${N}"; echo ""
+         run_backup check ;;
+      4) backup_drive ;;
+      5) backup_schedule ;;
+      6) run_backup clean ;;
+      0|"") return ;;
+      *) echo -e "${Y}Нет такого пункта.${N}" ;;
+    esac
+    echo ""
+    read -rp "  Enter — дальше " _
+  done
+}
+
+backup_drive() {
+  while true; do
+    clear
+    echo -e "${B}  КОПИИ НА GOOGLE DRIVE${N}"
+    echo "  ════════════════════════════════════════════════"
+    echo ""
+    run_backup drive
+    echo ""
+    echo -e "  ${C}Файлы лежат закрытыми. Ссылку открывай только когда${N}"
+    echo -e "  ${C}она нужна, и закрывай сразу после — внутри ключи.${N}"
+    echo ""
+    echo "   1) Открыть ссылку на последнюю копию"
+    echo "   2) Закрыть ссылку на последнюю копию"
+    echo "   0) Назад"
+    echo ""
+    local ans
+    read -rp "  Выбор: " ans
+    echo ""
+    case "$ans" in
+      1) run_backup link open ;;
+      2) run_backup link close ;;
+      0|"") return ;;
+      *) echo -e "${Y}Нет такого пункта.${N}" ;;
+    esac
+    echo ""
+    read -rp "  Enter — дальше " _
+  done
+}
+
+
 # ── Главное меню ────────────────────────────────────────────────────
 main_menu() {
   local n row ans
@@ -211,10 +383,14 @@ main_menu() {
              "$(state_of "$(fld "$row" 2)" "$(fld "$row" 3)")"
       n=$((n + 1))
     done
-    echo "   $n) Выход"
+    local backup_n=$((n))
+    local quit_n=$((n + 1))
+    echo "  ─────────────────────────────────────────────────"
+    printf "   %d) %-13s %b\n" "$backup_n" "Резервные копии" "$(last_backup_line)"
+    echo "   $quit_n) Выход"
     echo ""
     read -rp "  Выбор: " ans
-    if [ "$ans" = "$n" ] || [ "$ans" = "0" ] || [ "$ans" = "q" ] || [ -z "$ans" ]; then
+    if [ "$ans" = "$quit_n" ] || [ "$ans" = "0" ] || [ "$ans" = "q" ] || [ -z "$ans" ]; then
       clear; exit 0
     fi
     case "$ans" in
@@ -222,6 +398,8 @@ main_menu() {
     esac
     if [ "$ans" -ge 1 ] && [ "$ans" -le "${#BOTS[@]}" ]; then
       bot_menu "${BOTS[$((ans - 1))]}"
+    elif [ "$ans" = "$backup_n" ]; then
+      backup_menu
     fi
   done
 }
@@ -231,7 +409,16 @@ if [ "${1:-}" = "status" ]; then
     printf "%-13s %b\n" "$(fld "$row" 1)" \
            "$(state_of "$(fld "$row" 2)" "$(fld "$row" 3)")"
   done
+  printf "%-13s %b\n" "КОПИИ" "$(last_backup_line)"
   exit 0
+fi
+
+# backup.py умеет работать и сам, без меню. Это нужно для cron и чтобы
+# можно было позвать одной строкой: mybot backup make
+if [ "${1:-}" = "backup" ]; then
+  shift
+  run_backup "${@:-make}"
+  exit $?
 fi
 
 main_menu
