@@ -1,24 +1,15 @@
-#!/usr/bin/env bash
-# ════════════════════════════════════════════════════════════════════
-#  Установка mybot — меню управления ботами.
-#
-#  На чистом сервере:
-#      curl -fsSL https://raw.githubusercontent.com/arhman92/mybot/main/install.sh | bash
-#
-#  Если файлы уже лежат рядом (скачал архивом с GitHub) — просто:
-#      bash install.sh
-#
-#  Скрипт ничего не удаляет и ничего не запускает. Только кладёт
-#  команду mybot в /usr/local/bin и ставит screen, если его нет.
-# ════════════════════════════════════════════════════════════════════
 set -e
-
 GITHUB_USER="arhman92"
 REPO="mybot"
 BRANCH="main"
+
 DEST="/usr/local/bin/mybot"
 RAW="https://raw.githubusercontent.com/${GITHUB_USER}/${REPO}/${BRANCH}/mybot"
-HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+
+case "$0" in
+  */install.sh|install.sh) HERE="$(cd "$(dirname "$0")" && pwd)" ;;
+  *)                       HERE="" ;;
+esac
 
 if [ "$(id -u)" != "0" ]; then
   echo "Нужны права root. Запусти от root или через sudo."
@@ -37,7 +28,7 @@ if ! command -v screen >/dev/null 2>&1; then
 fi
 
 # Берём mybot: сначала рядом с собой, иначе качаем с GitHub.
-if [ -f "$HERE/mybot" ]; then
+if [ -n "$HERE" ] && [ -f "$HERE/mybot" ]; then
   install -m 755 "$HERE/mybot" "$DEST"
   echo "Взял mybot из папки рядом."
 else
