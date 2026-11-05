@@ -1,3 +1,4 @@
+
 set -e
 GITHUB_USER="arhman92"
 REPO="mybot"
@@ -49,7 +50,24 @@ else
   rm -f /tmp/mybot.$$
 fi
 
+# backup.py — рядом с mybot, в своей папке. Его зовёт и меню, и cron.
+mkdir -p /usr/local/lib/mybot
+if [ -n "$HERE" ] && [ -f "$HERE/backup.py" ]; then
+  install -m 644 "$HERE/backup.py" /usr/local/lib/mybot/backup.py
+  echo "Взял backup.py из папки рядом."
+else
+  if curl -fsSL "https://raw.githubusercontent.com/${GITHUB_USER}/${REPO}/${BRANCH}/backup.py" \
+       -o /tmp/backup.py.$$ 2>/dev/null \
+     && head -1 /tmp/backup.py.$$ | grep -q "coding"; then
+    install -m 644 /tmp/backup.py.$$ /usr/local/lib/mybot/backup.py
+  else
+    echo "Внимание: backup.py не скачался — раздел копий работать не будет."
+  fi
+  rm -f /tmp/backup.py.$$
+fi
+
 mkdir -p /root/4idea/Artemis/logs 2>/dev/null || true
+mkdir -p /root/backups 2>/dev/null || true
 
 echo
 echo "Готово. Команда установлена: $DEST"
